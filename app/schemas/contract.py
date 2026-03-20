@@ -31,7 +31,7 @@ class LegalTerm(BaseModel):
     why_it_matters: str
 
 
-# --- AI service internal model (what Claude returns) ---
+# --- AI service internal model (what OpenAI returns) ---
 
 class ContractAnalysis(BaseModel):
     summary: ContractSummary
