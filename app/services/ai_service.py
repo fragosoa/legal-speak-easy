@@ -23,29 +23,33 @@ Rules:
 - Flag anything that deviates significantly from standard contracts of the specified type.\
 """
 
-_USER_PROMPT_TEMPLATE = """\
-Analyze the following {contract_type_hint}contract and return a JSON object with exactly this structure:
-
-{{
-  "summary": {{
+_JSON_SCHEMA_BLOCK = """\
+{
+  "summary": {
     "plain_language": "<2-4 sentence plain English summary of the whole contract>",
     "key_facts": ["<fact 1>", "<fact 2>"],
     "risk_flags": [
-      {{
+      {
         "severity": "high|medium|low",
         "description": "<plain language description of the risk>"
-      }}
+      }
     ]
-  }},
+  },
   "legal_terms": [
-    {{
+    {
       "term": "<the legal term as it appears in the contract>",
       "original_context": "<verbatim sentence from the contract where this term appears>",
       "plain_definition": "<1-2 sentence plain definition>",
       "why_it_matters": "<1 sentence explaining the practical impact on the signer>"
-    }}
+    }
   ]
-}}
+}"""
+
+_USER_PROMPT_TEMPLATE = """\
+Analyze the following {contract_type_hint}contract and return a JSON object with exactly this structure:
+
+{json_schema}
+
 
 Guidelines:
 - key_facts: 4-8 bullet points with specific numbers, dates, and amounts (e.g. "Monthly rent: $1,800").
@@ -77,6 +81,7 @@ class AIService:
         contract_type_hint = f"{contract_type} " if contract_type else ""
         user_prompt = _USER_PROMPT_TEMPLATE.format(
             contract_type_hint=contract_type_hint,
+            json_schema=_JSON_SCHEMA_BLOCK,
             contract_text=parsed_doc.text,
         )
 

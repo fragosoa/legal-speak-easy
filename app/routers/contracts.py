@@ -7,6 +7,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated, Optional
 
+import anthropic
+import google.genai as genai
 import openai
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
@@ -18,9 +20,11 @@ from app.schemas.contract import (
     AskQuestionResponse,
     DocumentMetadata,
 )
-from app.services import ai_service as ai_module
 from app.services import document_parser
 from app.services.ai_service import AIService
+from app.services.claude_service import ClaudeService
+from app.services.gemini_service import GeminiService
+from app.services.pipeline_orchestrator import PipelineOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +36,26 @@ _SUPPORTED_CONTENT_TYPES = {
 }
 
 
-def get_ai_service(settings: Annotated[Settings, Depends(get_settings)]) -> AIService:
-    client = openai.OpenAI(api_key=settings.openai_api_key)
-    return AIService(
-        client=client,
-        model=settings.openai_model,
-        max_tokens=settings.openai_max_tokens,
+def get_pipeline_orchestrator(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> PipelineOrchestrator:
+    return PipelineOrchestrator(
+        openai_service=AIService(
+            client=openai.OpenAI(api_key=settings.openai_api_key),
+            model=settings.openai_model,
+            max_tokens=settings.openai_max_tokens,
+        ),
+        claude_service=ClaudeService(
+            client=anthropic.Anthropic(api_key=settings.anthropic_api_key),
+            model=settings.claude_model,
+            max_tokens=settings.openai_max_tokens,
+        ),
+        gemini_service=GeminiService(
+            client=genai.Client(api_key=settings.gemini_api_key),
+            model=settings.gemini_model,
+            max_tokens=settings.openai_max_tokens,
+        ),
+        include_perspectives=(settings.app_env != "production"),
     )
 
 
@@ -68,7 +86,7 @@ async def analyze_contract(
         Form(description="Optional hint: 'rent' or 'work'"),
     ] = None,
     settings: Settings = Depends(get_settings),
-    ai_service: AIService = Depends(get_ai_service),
+    orchestrator: PipelineOrchestrator = Depends(get_pipeline_orchestrator),
 ) -> AnalyzeContractResponse:
     # Validate file size
     file_bytes = await file.read()
@@ -98,8 +116,11 @@ async def analyze_contract(
         )
         parsed.text = parsed.text[: settings.contract_text_max_chars]
 
-    # Analyze with OpenAI
-    analysis = ai_service.analyze_contract(parsed, contract_type)
+    # Run multi-model pipeline: A + B in parallel, then C reconciles
+    final_analysis, perspectives, pipeline_meta = await orchestrator.run(
+        parsed_doc=parsed,
+        contract_type=contract_type,
+    )
 
     # Build context token for future Q&A
     context_token = _build_context_token(parsed.text, contract_type, settings.secret_key)
@@ -114,9 +135,11 @@ async def analyze_contract(
             extraction_method=parsed.extraction_method,
             truncated=truncated,
         ),
-        summary=analysis.summary,
-        legal_terms=analysis.legal_terms,
+        summary=final_analysis.summary,
+        legal_terms=final_analysis.legal_terms,
         context_token=context_token,
+        model_perspectives=perspectives,
+        pipeline_metadata=pipeline_meta,
     )
 
 
