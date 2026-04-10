@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 import anthropic
-import google.genai as genai
 import openai
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
@@ -23,7 +22,6 @@ from app.schemas.contract import (
 from app.services import document_parser
 from app.services.ai_service import AIService
 from app.services.claude_service import ClaudeService
-from app.services.gemini_service import GeminiService
 from app.services.pipeline_orchestrator import PipelineOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -48,11 +46,6 @@ def get_pipeline_orchestrator(
         claude_service=ClaudeService(
             client=anthropic.Anthropic(api_key=settings.anthropic_api_key),
             model=settings.claude_model,
-            max_tokens=settings.openai_max_tokens,
-        ),
-        gemini_service=GeminiService(
-            client=genai.Client(api_key=settings.gemini_api_key),
-            model=settings.gemini_model,
             max_tokens=settings.openai_max_tokens,
         ),
         include_perspectives=(settings.app_env != "production"),

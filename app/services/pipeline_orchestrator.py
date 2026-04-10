@@ -8,7 +8,6 @@ from app.schemas.contract import ContractAnalysis, ModelPerspective, PipelineMet
 from app.services.ai_service import AIService
 from app.services.claude_service import ClaudeService
 from app.services.document_parser import ParsedDocument
-from app.services.gemini_service import GeminiService
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +19,10 @@ class PipelineOrchestrator:
         self,
         openai_service: AIService,
         claude_service: ClaudeService,
-        gemini_service: GeminiService,
         include_perspectives: bool = False,
     ) -> None:
         self._openai_service = openai_service
         self._claude_service = claude_service
-        self._gemini_service = gemini_service
         self._include_perspectives = include_perspectives
 
     async def run(
@@ -65,29 +62,29 @@ class PipelineOrchestrator:
                 "All AI analysis services are currently unavailable. Please try again."
             )
 
-        # Determine fallback mode
+        # Determine fallback mode for reconcile call
         fallback_used = error_a is not None or error_b is not None
         fallback_reason: Optional[str] = None
         single_model_label: Optional[str] = None
 
         if error_a is not None and result_b is not None:
             fallback_reason = "model_a_failed"
-            single_model_label = "B (Anthropic Claude)"
+            single_model_label = "MODEL B (Claude)"
             effective_a = result_b
             effective_b = result_b
         elif error_b is not None and result_a is not None:
             fallback_reason = "model_b_failed"
-            single_model_label = "A (OpenAI GPT-4o)"
+            single_model_label = "MODEL A (GPT-4o)"
             effective_a = result_a
             effective_b = result_a
         else:
             effective_a = result_a  # type: ignore[assignment]
             effective_b = result_b  # type: ignore[assignment]
 
-        # Run Model C (Gemini) on a thread as well
+        # Model A reconciles both outputs into one final validated response
         final = await loop.run_in_executor(
             _executor,
-            self._gemini_service.reconcile,
+            self._openai_service.reconcile,
             effective_a,
             effective_b,
             contract_type,
@@ -113,7 +110,7 @@ class PipelineOrchestrator:
         metadata = PipelineMetadata(
             model_a_succeeded=error_a is None,
             model_b_succeeded=error_b is None,
-            reconciliation_model=self._gemini_service._model,
+            reconciliation_model=self._openai_service._model,
             fallback_used=fallback_used,
             fallback_reason=fallback_reason,
         )

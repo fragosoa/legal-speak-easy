@@ -7,8 +7,6 @@ class Settings(BaseSettings):
     openai_max_tokens: int = 4096
     anthropic_api_key: str
     claude_model: str = "claude-sonnet-4-6"
-    gemini_api_key: str
-    gemini_model: str = "gemini-2.5-flash"
     app_env: str = "development"
     max_file_size_mb: int = 10
     contract_text_max_chars: int = 80000

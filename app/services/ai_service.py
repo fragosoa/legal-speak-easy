@@ -88,6 +88,46 @@ class AIService:
         raw_json = self._call_openai(user_prompt)
         return self._parse_response(raw_json, retry_prompt=user_prompt)
 
+    def reconcile(
+        self,
+        analysis_a: ContractAnalysis,
+        analysis_b: ContractAnalysis,
+        contract_type: Optional[str],
+        single_model_label: Optional[str] = None,
+    ) -> ContractAnalysis:
+        contract_type_hint = f"{contract_type} " if contract_type else ""
+
+        if single_model_label is not None:
+            user_prompt = (
+                f"Review and finalize the following analysis of a {contract_type_hint}contract.\n\n"
+                f"=== ANALYSIS FROM {single_model_label} ===\n"
+                f"{analysis_a.model_dump_json(indent=2)}\n\n"
+                f"Return the validated JSON using exactly this structure:\n{_JSON_SCHEMA_BLOCK}\n\n"
+                "Respond ONLY with the JSON object."
+            )
+        else:
+            user_prompt = (
+                f"You are reviewing two independent AI analyses of the same {contract_type_hint}contract.\n\n"
+                f"=== ANALYSIS FROM MODEL A (GPT-4o) ===\n"
+                f"{analysis_a.model_dump_json(indent=2)}\n\n"
+                f"=== ANALYSIS FROM MODEL B (Claude) ===\n"
+                f"{analysis_b.model_dump_json(indent=2)}\n\n"
+                f"Your task: produce one final, validated JSON analysis using exactly this structure:\n"
+                f"{_JSON_SCHEMA_BLOCK}\n\n"
+                "Guidelines:\n"
+                "- Where both agree, reflect the consensus.\n"
+                "- Where they disagree on facts (amounts, dates), prefer the version grounded in the contract text.\n"
+                "- Where they disagree on risk or interpretation, include the most important concern from each.\n"
+                "- Do not include a legal term unless at least one model identified it.\n"
+                "- plain_language: synthesize both summaries into one clear paragraph.\n"
+                "- key_facts: merge and deduplicate; prefer the most specific value.\n"
+                "- risk_flags: include all unique flags; escalate severity if both models flagged the same risk.\n\n"
+                "Respond ONLY with the JSON object."
+            )
+
+        raw_json = self._call_openai(user_prompt)
+        return self._parse_response(raw_json, retry_prompt=user_prompt)
+
     def _call_openai(self, user_prompt: str) -> str:
         try:
             response = self._client.chat.completions.create(
