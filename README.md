@@ -2,20 +2,58 @@
 
 > Your Daily Law Companion — AI-powered backend that translates legal contracts into plain language.
 
-Legal Speak Easy helps non-lawyers understand what they sign. Upload a work or rent contract (PDF or DOCX) and get back a plain-language summary, a list of key facts, risk flags, and definitions of legal terminology — all powered by OpenAI GPT-4o.
+---
+
+## Problem
+
+Young professionals frequently sign legally binding contracts — leases, employment agreements, freelance contracts — without fully understanding what they are agreeing to. Legal language is intentionally precise, but that precision makes it inaccessible to anyone without a legal background. Hiring a lawyer to review a standard rent or work contract is expensive and often impractical.
+
+The result: people sign documents they don't understand, sometimes with significant financial or legal consequences.
+
+---
+
+## Solution
+
+Legal Speak Easy is an AI-powered backend API that accepts a contract file (PDF or DOCX) and returns a plain-language breakdown of what it says. The system is designed for young professionals who want confidence before they sign — not legal advice, but genuine comprehension.
+
+A user uploads their contract and gets back:
+
+- A **plain-language summary** of the entire document
+- A list of **key facts** (rent amount, duration, deposit, deadlines)
+- **Risk flags** ranked by severity — clauses that create unexpected obligations or restrict rights
+- Definitions of **legal terms** found in the document, with the exact sentence where each appears and a plain explanation of why it matters
 
 **Target users:** Young professionals signing rent and work contracts who want to fully understand their documents without hiring a lawyer.
 
 ---
 
-## Features
+## Multi-Model AI Pipeline
 
-- **Plain-language summary** — 2-4 sentence overview of the entire contract
-- **Key facts extraction** — specific numbers, dates, and amounts (rent price, duration, deposit, notice periods)
-- **Risk flags** — clauses with unexpected obligations or restrictions, ranked by severity (high / medium / low)
-- **Legal term definitions** — 5-15 terms identified in the document, each with a verbatim quote, plain definition, and explanation of practical impact
-- **PDF and DOCX support** — file type detected by content (not filename extension)
-- **Stateless design** — no database required; a signed context token is returned for future Q&A use
+The system uses three AI calls per request to improve accuracy and reduce hallucinations.
+
+A single LLM can misread, skip, or misinterpret clauses — especially in dense legal text. To address this, the system runs two models independently and then uses a reconciliation step:
+
+```
+Contract uploaded
+      │
+      ├──> Model A: GPT-4o        (independent analysis)
+      └──> Model B: Claude         (independent analysis)
+            [both run in parallel]
+                    │
+                    ▼
+           Model A: GPT-4o         (reconciliation call)
+           — compares both outputs
+           — merges facts, deduplicates terms
+           — escalates risk flags where both models agreed
+                    │
+                    ▼
+             Final response
+```
+
+- Two models analyzing the same contract independently reduces the chance that a misread clause slips through
+- The reconciliation step instructs GPT-4o to prefer facts grounded in the contract text when models disagree
+- Risk flags are escalated when both models flagged the same clause at different severity levels
+- If one model fails, the reconciliation call runs with the surviving model's output and `pipeline_metadata.fallback_used` is set to `true`
 
 ---
 
@@ -24,11 +62,13 @@ Legal Speak Easy helps non-lawyers understand what they sign. Upload a work or r
 | Layer | Technology |
 |-------|-----------|
 | Framework | FastAPI |
-| AI | OpenAI GPT-4o (`gpt-4o`) |
+| Model A + Reconciliation | OpenAI GPT-4o (`gpt-4o`) |
+| Model B | Anthropic Claude (`claude-sonnet-4-6`) |
 | PDF parsing | pdfplumber |
 | DOCX parsing | python-docx |
 | Config | pydantic-settings |
 | Runtime | Python 3.9+ |
+| Deployment | Railway |
 
 ---
 
@@ -37,22 +77,24 @@ Legal Speak Easy helps non-lawyers understand what they sign. Upload a work or r
 ```
 legal-speak-easy/
 ├── app/
-│   ├── main.py                  # FastAPI app, CORS, exception handlers
-│   ├── config.py                # Environment variable settings
+│   ├── main.py                       # FastAPI app, CORS, exception handlers
+│   ├── config.py                     # Environment variable settings
 │   ├── routers/
-│   │   └── contracts.py         # API endpoints
+│   │   └── contracts.py              # API endpoints + pipeline wiring
 │   ├── services/
-│   │   ├── document_parser.py   # PDF and DOCX text extraction
-│   │   └── ai_service.py        # OpenAI integration and prompt logic
+│   │   ├── document_parser.py        # PDF and DOCX text extraction
+│   │   ├── ai_service.py             # GPT-4o: analysis + reconciliation
+│   │   ├── claude_service.py         # Claude: independent analysis
+│   │   └── pipeline_orchestrator.py  # Parallel execution + fallback logic
 │   ├── schemas/
-│   │   └── contract.py          # Pydantic request/response models
+│   │   └── contract.py               # Pydantic request/response models
 │   └── core/
-│       └── exceptions.py        # Custom exceptions and error handlers
+│       └── exceptions.py             # Custom exceptions and error handlers
 ├── tests/
 │   ├── test_document_parser.py
 │   └── test_contracts_router.py
-├── Procfile                     # Railway deployment start command
-├── runtime.txt                  # Python version for Railway
+├── Procfile                          # Railway deployment start command
+├── runtime.txt                       # Python version for Railway
 ├── requirements.txt
 └── .env.example
 ```
@@ -65,6 +107,7 @@ legal-speak-easy/
 
 - Python 3.9+
 - An [OpenAI API key](https://platform.openai.com/api-keys)
+- An [Anthropic API key](https://console.anthropic.com/)
 
 ### Installation
 
@@ -88,6 +131,7 @@ Edit `.env` and fill in the required values:
 
 ```bash
 OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
 SECRET_KEY=<run: python -c "import secrets; print(secrets.token_hex(32))">
 ```
 
@@ -169,14 +213,16 @@ Uploads a contract file and returns a full AI-powered analysis in plain language
       "original_context": "Tenant agrees to indemnify and hold harmless the Landlord from any claims arising from Tenant's use of the premises.",
       "plain_definition": "You agree to cover the landlord's legal costs and damages if someone sues them because of something you did.",
       "why_it_matters": "You could be financially responsible for accidents or incidents in your unit even if the landlord is partly at fault."
-    },
-    {
-      "term": "force majeure",
-      "original_context": "Neither party shall be liable for delays caused by force majeure events beyond their reasonable control.",
-      "plain_definition": "Neither side is responsible for failing to meet obligations if an extraordinary event outside their control occurs (e.g. natural disaster, pandemic).",
-      "why_it_matters": "This could limit your ability to break the lease without penalty during unusual circumstances."
     }
   ],
+  "pipeline_metadata": {
+    "model_a_succeeded": true,
+    "model_b_succeeded": true,
+    "reconciliation_model": "gpt-4o",
+    "fallback_used": false,
+    "fallback_reason": null
+  },
+  "model_perspectives": "<individual model outputs, included in development mode only>",
   "context_token": "<signed token for future Q&A use>"
 }
 ```
@@ -188,7 +234,7 @@ Uploads a contract file and returns a full AI-powered analysis in plain language
 | `400` | Unsupported file type (not PDF or DOCX) |
 | `413` | File exceeds the 10 MB size limit |
 | `422` | Text could not be extracted (e.g. scanned image PDF) |
-| `502` | OpenAI API is unavailable |
+| `502` | AI service unavailable |
 
 ---
 
@@ -211,7 +257,7 @@ Uploads a contract file and returns a full AI-powered analysis in plain language
 
 ```json
 {
-  "answer": "Based on the contract, you are required to give 60 days written notice before leaving. Leaving 30 days early means you did not meet this requirement, so the landlord may be entitled to keep part of your deposit and charge an early termination fee equivalent to 2 months rent (Section 9.2).",
+  "answer": "Based on the contract, you are required to give 60 days written notice before leaving...",
   "source_excerpt": "Section 9.2: Tenant must provide 60 days written notice prior to vacating the premises..."
 }
 ```
@@ -222,14 +268,18 @@ Uploads a contract file and returns a full AI-powered analysis in plain language
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `OPENAI_API_KEY` | Yes | — | Your OpenAI API key |
+| `OPENAI_API_KEY` | Yes | — | OpenAI API key (GPT-4o) |
+| `ANTHROPIC_API_KEY` | Yes | — | Anthropic API key (Claude) |
 | `SECRET_KEY` | Yes | — | Random secret for signing context tokens |
-| `OPENAI_MODEL` | No | `gpt-4o` | OpenAI model to use |
-| `OPENAI_MAX_TOKENS` | No | `4096` | Max tokens for AI response |
+| `OPENAI_MODEL` | No | `gpt-4o` | OpenAI model for analysis and reconciliation |
+| `OPENAI_MAX_TOKENS` | No | `4096` | Max tokens per AI response |
+| `CLAUDE_MODEL` | No | `claude-sonnet-4-6` | Anthropic model for independent analysis |
 | `APP_ENV` | No | `development` | `development` or `production` |
 | `MAX_FILE_SIZE_MB` | No | `10` | Maximum upload size in MB |
 | `CONTRACT_TEXT_MAX_CHARS` | No | `80000` | Text truncation limit before sending to AI |
 | `ALLOWED_ORIGINS` | No | `http://localhost:3000,...` | Comma-separated CORS origins |
+
+> In `development` mode, the response includes `model_perspectives` showing the raw outputs from GPT-4o and Claude before reconciliation. This field is omitted in `production`.
 
 ---
 
