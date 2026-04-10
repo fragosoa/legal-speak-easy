@@ -23,29 +23,33 @@ Rules:
 - Flag anything that deviates significantly from standard contracts of the specified type.\
 """
 
-_USER_PROMPT_TEMPLATE = """\
-Analyze the following {contract_type_hint}contract and return a JSON object with exactly this structure:
-
-{{
-  "summary": {{
+_JSON_SCHEMA_BLOCK = """\
+{
+  "summary": {
     "plain_language": "<2-4 sentence plain English summary of the whole contract>",
     "key_facts": ["<fact 1>", "<fact 2>"],
     "risk_flags": [
-      {{
+      {
         "severity": "high|medium|low",
         "description": "<plain language description of the risk>"
-      }}
+      }
     ]
-  }},
+  },
   "legal_terms": [
-    {{
+    {
       "term": "<the legal term as it appears in the contract>",
       "original_context": "<verbatim sentence from the contract where this term appears>",
       "plain_definition": "<1-2 sentence plain definition>",
       "why_it_matters": "<1 sentence explaining the practical impact on the signer>"
-    }}
+    }
   ]
-}}
+}"""
+
+_USER_PROMPT_TEMPLATE = """\
+Analyze the following {contract_type_hint}contract and return a JSON object with exactly this structure:
+
+{json_schema}
+
 
 Guidelines:
 - key_facts: 4-8 bullet points with specific numbers, dates, and amounts (e.g. "Monthly rent: $1,800").
@@ -77,8 +81,49 @@ class AIService:
         contract_type_hint = f"{contract_type} " if contract_type else ""
         user_prompt = _USER_PROMPT_TEMPLATE.format(
             contract_type_hint=contract_type_hint,
+            json_schema=_JSON_SCHEMA_BLOCK,
             contract_text=parsed_doc.text,
         )
+
+        raw_json = self._call_openai(user_prompt)
+        return self._parse_response(raw_json, retry_prompt=user_prompt)
+
+    def reconcile(
+        self,
+        analysis_a: ContractAnalysis,
+        analysis_b: ContractAnalysis,
+        contract_type: Optional[str],
+        single_model_label: Optional[str] = None,
+    ) -> ContractAnalysis:
+        contract_type_hint = f"{contract_type} " if contract_type else ""
+
+        if single_model_label is not None:
+            user_prompt = (
+                f"Review and finalize the following analysis of a {contract_type_hint}contract.\n\n"
+                f"=== ANALYSIS FROM {single_model_label} ===\n"
+                f"{analysis_a.model_dump_json(indent=2)}\n\n"
+                f"Return the validated JSON using exactly this structure:\n{_JSON_SCHEMA_BLOCK}\n\n"
+                "Respond ONLY with the JSON object."
+            )
+        else:
+            user_prompt = (
+                f"You are reviewing two independent AI analyses of the same {contract_type_hint}contract.\n\n"
+                f"=== ANALYSIS FROM MODEL A (GPT-4o) ===\n"
+                f"{analysis_a.model_dump_json(indent=2)}\n\n"
+                f"=== ANALYSIS FROM MODEL B (Claude) ===\n"
+                f"{analysis_b.model_dump_json(indent=2)}\n\n"
+                f"Your task: produce one final, validated JSON analysis using exactly this structure:\n"
+                f"{_JSON_SCHEMA_BLOCK}\n\n"
+                "Guidelines:\n"
+                "- Where both agree, reflect the consensus.\n"
+                "- Where they disagree on facts (amounts, dates), prefer the version grounded in the contract text.\n"
+                "- Where they disagree on risk or interpretation, include the most important concern from each.\n"
+                "- Do not include a legal term unless at least one model identified it.\n"
+                "- plain_language: synthesize both summaries into one clear paragraph.\n"
+                "- key_facts: merge and deduplicate; prefer the most specific value.\n"
+                "- risk_flags: include all unique flags; escalate severity if both models flagged the same risk.\n\n"
+                "Respond ONLY with the JSON object."
+            )
 
         raw_json = self._call_openai(user_prompt)
         return self._parse_response(raw_json, retry_prompt=user_prompt)

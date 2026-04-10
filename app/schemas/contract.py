@@ -38,6 +38,22 @@ class ContractAnalysis(BaseModel):
     legal_terms: List[LegalTerm]
 
 
+# --- Multi-model pipeline metadata ---
+
+class ModelPerspective(BaseModel):
+    model: str
+    provider: str
+    analysis: ContractAnalysis
+
+
+class PipelineMetadata(BaseModel):
+    model_a_succeeded: bool
+    model_b_succeeded: bool
+    reconciliation_model: str
+    fallback_used: bool = False
+    fallback_reason: Optional[str] = None
+
+
 # --- API request/response models ---
 
 class AnalyzeContractResponse(BaseModel):
@@ -46,6 +62,8 @@ class AnalyzeContractResponse(BaseModel):
     summary: ContractSummary
     legal_terms: List[LegalTerm]
     context_token: str
+    model_perspectives: Optional[List[ModelPerspective]] = None
+    pipeline_metadata: Optional[PipelineMetadata] = None
 
 
 class AskQuestionRequest(BaseModel):

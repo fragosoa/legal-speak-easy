@@ -5,6 +5,8 @@ class Settings(BaseSettings):
     openai_api_key: str
     openai_model: str = "gpt-4o"
     openai_max_tokens: int = 4096
+    anthropic_api_key: str
+    claude_model: str = "claude-sonnet-4-6"
     app_env: str = "development"
     max_file_size_mb: int = 10
     contract_text_max_chars: int = 80000
